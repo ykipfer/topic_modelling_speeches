@@ -1,0 +1,408 @@
+---
+title: 'Final Paper: Topic Modelling of Inaugural Speeches'
+author: "Yanik L. Kipfer"
+date: "`r format(Sys.time(), "%d %B, %Y")`"
+output:
+  html_document
+---
+```{r setup, include=F, echo=F, message= F, warning= F}
+######## DATA PREPARATION #########
+
+# Load Packages
+library(readxl)
+library(magrittr)
+library(tm)
+
+# set seed
+set.seed(1234)
+
+# Load Data
+data <- read.csv("c-span-inagural-addresses.csv", stringsAsFactors = F)
+
+# Create Corpus
+pres_corpus <- Corpus(VectorSource(data$speach.content))
+
+# Clean Corpus
+pres_clean <- pres_corpus %>%
+  tm_map(tolower) %>% 
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, c("will","united","states","must","can","the","and","however", "shall","upon","may","let", "one", "new","now", "every","government", "people","great", stopwords("english"))) %>% 
+  tm_map(removePunctuation) %>% 
+  tm_map(stripWhitespace)
+
+# Create Document-Term-Matrix
+pres_dtm <- DocumentTermMatrix(pres_clean)
+
+# Inspection of Document-Term-Matrix
+inspect(pres_dtm)
+
+# Remove Very Rare Terms
+pres_dtm <- removeSparseTerms(pres_dtm, 0.90)
+inspect(pres_dtm)
+
+# Convert Corpus into Matrix
+pres_mat <- as.matrix(pres_dtm)
+```
+
+# 1. Introduction
+George Washington held the first inaugural speech during his inauguration as the first US president in 1789. Ever since then, most presidents have upheld the tradition of addressing the nation, during their presidential inauguration, through a speech. Within these speeches, presidents tend to outline the challenges that the nation faces and how they plan on solving them during their term of office. Additionally, the speech is also meant to unite and ensure the support of the population for the new administration, after the election is over. Thus, inaugural speeches can contain valuable information on the most salient topics during the election, as well as the president's agenda.
+
+A closer analysis of the inaugural addresses delivered by the various presidents might, therefore, deliver valuable insights on which presidents addressed similar topics in their speeches and hint at the salient issues they faced during their terms of office. 
+
+The primary aim of this paper lies in the attempt of identifying the main topics contained within the various inaugural speeches and subsequently, identify the similarities and differences between the speeches.
+
+Following, I will first describe the data used for the analysis, the method employed to identify the various topics, to then present the results and conclude on the findings.
+
+# 2. Data
+The original data is comprised of 59 presidential inauguration speeches from 36 presidents ranging from the year 1789 to 2017. A full list of all presidents with inauguration speeches present in the dataset can be found in at the end of the paper.
+
+In order to perform the analysis, the dataset is converted into a document-term matrix. After removing all the punctuation, spacing between words, as well as commonly used words (so-called stopwords) and very rare words (here I have set the sparse factor to 0.90, removing all words that occur less than 10% in all documents) which do not contribute any information for the topic modelling process, the final dataset spans over 59 document and 1949 terms.
+
+Looking at the total term distribution within the document-term matrix (Figure 1), makes it apparent that inaugural speeches tend to extensively use the terms *country*, *world* and *nation*, since these terms can be found over 300 times in the data.
+
+\vspace{12pt}
+```{r, echo=F, message= F, warning= F, fig.height= 4, fig.width= 6}
+#### Term distribution in Data ####
+
+# Load Packages
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+
+# Plot total term distribution in data
+pres_mat %>% 
+  melt() %>% 
+  group_by(Terms) %>% 
+  tally(value) %>% 
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(Terms,n), y = n, fill = factor(n))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Total Frequency", title = "Figure 1: Total Term Distribution") +
+  coord_flip() +
+  theme(text=element_text(size=12,  family="serif"))
+```
+\vspace{12pt}
+
+# 3. Method
+In order to extract the primary topics contained within the speeches, I use **Non-Negative Matrix Factorization** (NMF). Similar to Singular Value Decomposition (SVD), NMF is a dimensionality reduction method with the main difference between SVD and NMF lying in the fact that NMF accounts for the non-negative nature of text data, by constraining the values within the matrices to only take on non-negative values.
+
+NMF seeks to extract the latent topics in the document-term matrix by decomposing it into a topic-term and document-topic matrix. The topic-term matrix delivers information on the latent topics found within our data, while the document-topic matrix tells us about the association between the documents and the latent topics. The main idea behind the decomposition is that when the topic-term and document-topic matrices are multiplied, they should approximately reconstruct our original document-term matrix. To achieve the best approximation of our original document-term matrix, NMF tries to minimize the loss of information caused by the decomposition, through an iterative process.
+
+To perform NMF, we first need to define the number of topics the algorithm should extract. Using a eigen decomposition and a explained variance threshold of 70%, table 1 shows that 9 topics should be extracted to be able to explain 70% of the total variance.
+
+```{r, echo=F, message= F, warning= F}
+#### Determining The Amount Of Topics To Extract ####
+
+# Load Packages
+library(knitr)
+library(kableExtra)
+
+# To extract 75 percent of the total variance, we should retain 9 topics
+out <- svd(pres_mat)
+varcont <- out$d^2/(sum(out$d^2))
+singular <- round(100*varcont,1)
+singular_df <- as.data.frame(singular[1:9])
+
+# Create Vector with Topic names
+topics <- paste0("Topic ",1:9)
+
+# Rename Rows and Columns
+rownames(singular_df) <- topics
+colnames(singular_df) <- "Explained Variance"
+singular_df$CumSum <- cumsum(singular_df)
+
+# Output table
+kable(singular_df, caption = "Explained Variance of Topics", booktabs = T) %>%
+kable_styling(latex_options = "striped")
+```
+\newpage
+
+# 4. Results
+In the following section, I will present the results of the topic modelling analysis. For the sake of easier comprehension, I will first show and briefly interpret the latent topics found by NMF and, subsequently, look at the association between these topics and the presidential speeches.
+
+## 4.1. Term-Topic Distribution
+Figure 2 shows the distribution of the top ten terms for each topic.
+Starting with the **first topic**  we see that amongst its most frequent terms used are words, such as world, America/American, nation and freedom. Thus, overall topic 1 seems to mostly address **America as a nation**.
+
+The **second topic** is heavily characterised by words like public, union, foreign, nations and interests. Therefore, it can be interpreted to pick up on **issues of foreign policy**.
+
+Turning to the **third topic** it immediately comes to attention that this topic speaks to themes concerned with war, congress and country, thereby, it might point to issues of **civil conflict/war**.
+
+**Topic 4** can be interpreted to pick up on the theme of **constitution and the union**, while **topic 5** deals with issues of **world peace**.
+
+**Topic 6** similar to topic 4 seems to pick up on constitutional issues; however, it seems with more of a focus and institutions and the executive. Therefore, it can be interpreted on picking up on the topic of **separation of powers**.
+
+**Topic 7** concerns itself with the topic of **law**, while **topic 8** is harder to interpret, looking at the term distribution we see that the terms most used in topic 8 are nation, life, men, things, good and spirit. These words point to uplifting themes and, thus, might address the topic of *nation-building*. 
+Finally, **topic 9** picks up on topics concerned with the **economy**.
+
+Table 2 provides a full overview of all the identified themes for all topics.
+
+\vspace{12pt}
+```{r, echo=F, message= F, warning= F}
+#### Topic-Term Distribution ####
+
+# Topic-Term Matrix: Create the matrix V^t
+library(svs)
+nnf.fit <- fast_nmf(pres_mat, 9, type = "KL", tol = 1e-16)
+term_topics <- round(nnf.fit$pos2,0)
+rownames(term_topics) <- topics
+
+# Rearrange Data into long format
+top <- melt(term_topics)
+
+# Create plot data for all topics
+p1 <- top %>%
+  filter(top$Var1 == "Topic 1") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 1") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p2 <- top %>%
+  filter(top$Var1 == "Topic 2") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 2") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p3 <- top %>%
+  filter(top$Var1 == "Topic 3") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 3") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p4 <- top %>%
+  filter(top$Var1 == "Topic 4") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 4") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p5 <- top %>%
+  filter(top$Var1 == "Topic 5") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 5") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p6 <- top %>%
+  filter(top$Var1 == "Topic 6") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 6") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p7 <- top %>%
+  filter(top$Var1 == "Topic 7") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 7") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p8 <- top %>%
+  filter(top$Var1 == "Topic 8") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 8") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p9 <- top %>%
+  filter(top$Var1 == "Topic 9") %>% 
+  top_n(10, value) %>%
+  ggplot(aes(x = reorder(Var2,value), y = value, fill = factor(Var2))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Term", y = "Frequency", title = "Topic 9") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+# Arrange Plots
+library(gridExtra)
+grid.arrange(p1,p2,p3,p4,p5,p6,p7,p8,p9, top ="Figure 2: Topic-Term Distribution By Topic")
+```
+\vspace{12pt}
+
+```{r, echo=F, message= F, warning= F}
+themes <- c("America As A Nation","Foreign Policy","Civil Conflict","Constitution & the Union","World Peace","Seperation of Powers","Law","Nation Building","Economy")
+newtable <- cbind(topics,themes)
+kable(newtable, caption = "Topics And Their Themes", booktab = T,) %>%
+kable_styling(latex_options = "striped")
+```
+\newpage
+
+## 4.2. Document-Topic Distribution
+This section will, finally, look at how strongly the different speeches are associated with the previously identified topics and elaborate on the most interesting patterns found through these associations.
+
+Figure 3 presents the document-topic distribution and shows us the 10 documents that are most strongly associated with a particular topic. 
+One thing that becomes immediately apparent when looking at the speech-topic distribution is that speeches from presidents that had their terms in office relatively close to each other tended to address the same topics. Looking at Topic 1, we see that the speeches that are most strongly associated with this topic are all from presidents who served within the last 50 years. During this time, Americans experienced the fall of communism, the terrorist attacks on September 11th 2001 and, with Barack Obama, the first black president in American history. The speeches made during these times, thus, appealed greatly to the notion of being an American and an American nation. Similar can be said for topic 8, which is most strongly associated with speeches at the beginning of the 20th century. The beginning of the 20th century were times of great tumult. America and the world experienced two world wars and the Great Depression. Thus, it is not suprising that these speeches tended to have more uplifting sentiments, as contained in topic 8.
+
+Therefore, while it is not surprising that similar issues confronted presidents who served close to each other, the different topics found through NMF show that the salient topics changed over time.
+
+Furthermore, we can see that the previous interpretation of the topics is mostly consistent with the speeches associated with them. Focusing on topic 4, we had previously stated that this topic addressed themes to do with the constitution and the Union. President Lincoln's speech is most strongly associated with topic 4. Lincoln served as a president during the American Civil War, a time where issues of the constitution and the Union of states were most pressing in American politics.
+
+Furthermore, Topic 2, which mostly picks up on topics of foreign policy, also seems to fit the speeches it is strongly associated with. On the one hand, European colonialism of the Americas was a central issue during Monroe's term in office and his inaugural speech. Monroe was a staunch opponent of European colonialism in the Americas and, through the Monroe Doctrine, Monroe determined that the Americas were to be independent of European influence, which was a key moment in US foreign policy. On the other hand, during his inaugural speech, Polk talks at length on the foreign policies issues. In specific, the main foreign policy issue addressed by Polk was his desire that Texas would rejoin the Union. Up till that point, Texas was still formally a part of Mexico.
+
+Another example of the congruency between topic and speeches can be seen when looking at topic 5. The speeches most strongly associated with topic 5 are mostly from presidents who served shortly after the first or second world war. Unsurprisingly, therefore, topic 5 mostly speaks to themes of world peace. When taking a closer look at the speeches made by Harding, Coolidge and Truman, all three heavily address the topic of peace.
+
+Overall, we can say that NMF seems to have correctly identified the different topics addressed by the inaugural speeches and that the most striking pattern found within our data is that presidents who served close to each other, addressed similar topic within their speeches and that these topics changed over time.
+
+\vspace{12pt}
+```{r, echo=F, message= F, warning= F}
+#### Document-Topic Distribution #####
+
+# Create Vector with Document names
+d <- data$president
+y <- data$year
+document <- paste0(d,y)
+
+# Document-Topics Matrix: Show the matrix U
+doc_topics <- nnf.fit$pos1
+
+# Rename rows and columns
+colnames(doc_topics) <- topics
+rownames(doc_topics) <- document
+docs <- melt(doc_topics)
+
+# Convert Matrix into Dataset
+doc_topics <- as.data.frame(doc_topics)
+
+# Plot Topic Distribution
+p10 <- docs %>%
+  filter(docs$Var2 == "Topic 1") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 1") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p11 <- docs %>%
+  filter(docs$Var2 == "Topic 2") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 2") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p12 <- docs %>%
+  filter(docs$Var2 == "Topic 3") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 3") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p13 <- docs %>%
+  filter(docs$Var2 == "Topic 4") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 4") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p14 <- docs %>%
+  filter(docs$Var2 == "Topic 5") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 5") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p15 <- docs %>%
+  filter(docs$Var2 == "Topic 6") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 6") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p16 <- docs %>%
+  filter(docs$Var2 == "Topic 7") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 7") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p17 <- docs %>%
+  filter(docs$Var2 == "Topic 8") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 8") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+
+p18 <- docs %>%
+  filter(docs$Var2 == "Topic 9") %>% 
+  top_n(10, value) %>%
+  arrange(-value) %>% 
+  ggplot(aes(x = reorder(Var1,value), y = value, fill = factor(Var1))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = "Document", y = "Association", title = "Topic 9") +
+  coord_flip()+
+  theme(text=element_text(size=12,  family="serif"))
+# Arrange Plots
+grid.arrange(p10,p11,p12,p13,p14,p15,p16,p17,p18, top = "Figure 3: Topic-Document Distribution by Topic")
+```
+\vspace{12pt}
+
+# 5. Conclusion
+This paper set out to identify the different topics contained within presidential inauguration speeches and, thereby, find patterns amongst these speeches.
+Using data on 59 inaugural speeches from 36 US presidents, 9 topics were identified and extracted through Non-Negative Matrix Factorization. Through the interpretation of the term distribution amongst the 9 topics, I identified that these topics addressed different issues reaching from themes concerned with world peace to such concerned with civil conflict.
+
+Subsequently, I took a look at which speeches were most closely associated with the different topics and tried to find patterns within this distribution. I concluded that presidents who served their terms in the office close to each other tended to address the same topics.
+
+I also took a look at how well the topics identified the inherent themes contained within the speeches, by comparing the content of a few speeches to the interpretation of the topics they were most associated with. Taken as a whole, the interpretation of the topics were a close fit to the content of the speeches.
+\newpage
+
+
+```{r, echo=F, message= F, warning= F, fig.height= 3, fig.width= 6}
+dtf <- select(data,c(year, president))
+
+filler <- c("","")
+
+t1 <- dtf %>% 
+  .[1:30,]
+
+
+t2 <- dtf %>% 
+  .[31:59,] %>% 
+  rbind(filler)
+
+t3 <- cbind(t1,t2)
+
+knitr::kable(t3, caption = "List of Presidents With Inauguration Speeches") %>%
+kable_styling(latex_options = "striped", font_size = 10)
+```
+
